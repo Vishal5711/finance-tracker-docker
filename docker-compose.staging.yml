@@ -1,0 +1,77 @@
+version: '3.8'
+
+# Staging Environment Configuration
+networks:
+  staging_network:
+    driver: bridge
+
+volumes:
+  staging_mysql_data:
+  staging_logs:
+
+services:
+  # MySQL for Staging
+  mysql_staging:
+    image: mysql:8.0
+    container_name: finance_mysql_staging
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: staging_password
+      MYSQL_DATABASE: finance_db_staging
+      MYSQL_USER: staging_user
+      MYSQL_PASSWORD: staging_pass
+    ports:
+      - "3307:3306"  # Different port for staging
+    volumes:
+      - staging_mysql_data:/var/lib/mysql
+    networks:
+      - staging_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # Flask Backend for Staging
+  backend_staging:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev  # Use dev dockerfile for staging
+    container_name: finance_backend_staging
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql+pymysql://staging_user:staging_pass@mysql_staging:3306/finance_db_staging
+      FLASK_ENV: staging
+      FLASK_DEBUG: 1
+    ports:
+      - "5001:5000"  # Different port for staging
+    volumes:
+      - staging_logs:/app/logs
+      - .:/app  # Mount source code for development
+    networks:
+      - staging_network
+    depends_on:
+      mysql_staging:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/summary"]
+      timeout: 10s
+      retries: 5
+
+  # Test Runner for Staging
+  test_runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: finance_test_runner
+    environment:
+      DATABASE_URL: mysql+pymysql://staging_user:staging_pass@mysql_staging:3306/finance_db_staging
+      FLASK_ENV: testing
+    volumes:
+      - .:/app
+    networks:
+      - staging_network
+    depends_on:
+      - backend_staging
+    command: ["python", "-m", "pytest", "tests/", "-v"]
+    profiles:
+      - testing
